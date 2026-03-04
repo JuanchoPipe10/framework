@@ -1,32 +1,46 @@
+/**
+ * @file messages.h
+ * @brief Data structures for inter-device communication
+ * 
+ * Defines common message formats used across the distributed
+ * embedded communication framework.
+ */
+
 #ifndef MESSAGES_H
 #define MESSAGES_H
 
 #include <stdint.h>
 
-// Tipos de mensajes que puede enviar el sistema
+/**
+ * @brief Message types for device communication
+ */
 typedef enum {
-    MSG_TYPE_DISCOVERY = 1,    // Para descubrimiento inicial
-    MSG_TYPE_CAR_STATUS = 2,   // Estado del carro
-    MSG_TYPE_SENSOR_DATA = 3,  // Datos de sensores (para futuro)
-    MSG_TYPE_COMMAND = 4       // Comandos (para futuro)
+    MSG_TYPE_DISCOVERY = 1,
+    MSG_TYPE_CAR_STATUS = 2,
+    MSG_TYPE_SENSOR_DATA = 3,
+    MSG_TYPE_COMMAND = 4
 } MessageType;
 
-// Estructura principal para mensajes de carro
+/**
+ * @brief Structure for vehicle/device status messages
+ */
 typedef struct {
-    uint32_t id;           // ID único del dispositivo
-    float x;               // Posición X
-    float y;               // Posición Y
-    float speed;           // Velocidad actual
-    uint8_t state;         // Estado (0=stopped, 1=moving, 2=error, etc)
-    uint32_t timestamp;    // Marca de tiempo
+    uint32_t id;          // Unique device identifier
+    float x;              // Position X coordinate
+    float y;              // Position Y coordinate
+    float speed;          // Current speed
+    uint8_t state;        // Device state (0=stopped, 1=moving, 2=error)
+    uint32_t timestamp;   // Unix timestamp
 } CarMessage;
 
-// Estructura de respuesta al descubrimiento
+/**
+ * @brief Discovery response structure
+ */
 typedef struct {
-    char device_id[32];    // Ej: "car03"
-    char device_type[16];  // Ej: "ultra96", "pc"
-    uint16_t tcp_port;     // Puerto TCP para comunicación directa
-    uint32_t capabilities; // Flags de capacidades (para futuro)
+    char device_id[32];       // Device identifier (e.g., "car03")
+    char device_type[16];     // Device type (e.g., "ultra96", "pc")
+    uint16_t tcp_port;        // TCP port for direct communication
+    uint32_t capabilities;    // Capability flags (reserved for future use)
 } DiscoveryResponse;
 
 #endif // MESSAGES_H

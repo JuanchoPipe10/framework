@@ -1,0 +1,6 @@
+# Compiled objects
+src/*.o
+bin/framework
+
+# VSCode
+.vscode/
