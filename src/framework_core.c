@@ -183,8 +183,17 @@ int framework_run(Framework *fw) {
     pthread_t server_tid, client_tid;
     int server_started = 0, client_started = 0;
 
-    // Discovery disabled on Ultra96 - use config file instead
-    printf("[FRAMEWORK] Running without discovery - use config file\n");
+    // Start UDP discovery FIRST
+    if (discovery_init(&fw->discovery,
+                       fw->registry.my_device_id,
+                       fw->my_device_type,
+                       fw->my_port,
+                       &fw->registry) < 0) {
+        fprintf(stderr, "[WARNING] Discovery init failed - continuing without it\n");
+    } else {
+        discovery_start_listener(&fw->discovery);
+        sleep(2);
+    }
 
     // Start TCP server
     if (fw->mode == MODE_SERVER || fw->mode == MODE_HYBRID) {

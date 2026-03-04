@@ -126,20 +126,16 @@ static void handle_packet(DiscoveryContext *ctx,
 static void *listener_thread(void *arg)
 {
     DiscoveryContext *ctx = (DiscoveryContext *)arg;
-    printf("[DEBUG] Listener thread running\n");
     
-    printf("[DEBUG] About to announce...\n");
     printf("[DISCOVERY] Listener thread started on UDP port %d\n", DISCOVERY_PORT);
 
     /* Send initial announcement */
     discovery_announce(ctx);
-    printf("[DEBUG] Announce done\n");
     /* Periodic re-announcement timer */
     int ticks = 0;
 
     while (ctx->running) {
 
-        printf("[DEBUG] Listener loop tick %d\n", ticks);
         /* Use select() with a 1-second timeout so we can check running flag */
         fd_set fds;
         FD_ZERO(&fds);
@@ -201,7 +197,6 @@ int discovery_init(DiscoveryContext *ctx,
         perror("[DISCOVERY] Failed to create sender socket");
         return -1;
     }
-    printf("[DEBUG] Sender socket created: %d\n", ctx->udp_sock);
 
     int broadcast = 1;
     if (setsockopt(ctx->udp_sock, SOL_SOCKET, SO_BROADCAST,
@@ -210,7 +205,6 @@ int discovery_init(DiscoveryContext *ctx,
         close(ctx->udp_sock);
         return -1;
     }
-    printf("[DEBUG] Broadcast enabled\n");
 
     // Bind sender to specific interface
     struct ifreq ifr;
@@ -228,7 +222,6 @@ int discovery_init(DiscoveryContext *ctx,
         close(ctx->udp_sock);
         return -1;
     }
-    printf("[DEBUG] Listener socket created: %d\n", ctx->listen_sock);
 
 
     int reuse = 1;
@@ -247,10 +240,6 @@ int discovery_init(DiscoveryContext *ctx,
         close(ctx->listen_sock);
         return -1;
     }
-    printf("[DEBUG] Listener socket created: %d\n", ctx->listen_sock);
-
-    printf("[DISCOVERY] Initialized for device: %s (type: %s, tcp_port: %d)\n",
-           device_id, device_type, tcp_port);
     printf("[DISCOVERY] Sockets created OK\n");
     printf("[DISCOVERY] Initialized for device: %s (type: %s, tcp_port: %d)\n",
            device_id, device_type, tcp_port);
