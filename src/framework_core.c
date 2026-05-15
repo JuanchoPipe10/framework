@@ -13,6 +13,7 @@
 #include <signal.h>
 #include <arpa/inet.h>
 
+
 // Global framework pointer for signal handler
 static Framework *g_framework = NULL;
 
@@ -82,12 +83,18 @@ void* client_thread(void *arg) {
             Device *dev = &devices[i];
             if (!dev->connected) continue;
 
+            // Read sensor if available, otherwise use default
+            float distance = 999.0f;
+            if (fw->read_sensor != NULL) {
+                distance = fw->read_sensor();
+            }
+
             CarMessage msg = {
                 .id        = 1,
-                .x         = 10.0f,
-                .y         = 20.0f,
-                .speed     = 5.0f,
-                .state     = 1,
+                .x         = distance,
+                .y         = 0.0f,
+                .speed     = 0.0f,
+                .state     = (distance < 0) ? 2 : 1,
                 .timestamp = (uint32_t)time(NULL)
             };
 
@@ -267,4 +274,8 @@ int framework_broadcast(Framework *fw, const CarMessage *msg) {
 void framework_set_callback(Framework *fw, MessageCallback cb) {
     fw->on_message = cb;
     printf("[FRAMEWORK] Message callback %s\n", cb ? "registered" : "cleared");
+}
+void framework_set_sensor(Framework *fw, SensorReadCallback cb) {
+    fw->read_sensor = cb;
+    printf("[FRAMEWORK] Sensor callback %s\n", cb ? "registered" : "cleared");
 }

@@ -18,15 +18,19 @@ typedef enum {
 // Callback type: called every time a message is received
 typedef void (*MessageCallback)(const char *from_ip, const CarMessage *msg);
 
+// Sensor callback type: returns current distance in cm
+typedef float (*SensorReadCallback)(void);
+
 typedef struct {
-    DeviceRegistry   registry;
-    DiscoveryContext discovery;
-    FrameworkMode    mode;
-    uint16_t         my_port;
-    char             my_device_type[MAX_DEVICE_TYPE_LEN];
-    int              server_sock;
-    volatile int     running;
-    MessageCallback  on_message;   // NULL if not set
+    DeviceRegistry     registry;
+    DiscoveryContext   discovery;
+    FrameworkMode      mode;
+    uint16_t           my_port;
+    char               my_device_type[MAX_DEVICE_TYPE_LEN];
+    int                server_sock;
+    volatile int       running;
+    MessageCallback    on_message;    // NULL if not set
+    SensorReadCallback read_sensor;   // NULL if not set
 } Framework;
 
 int framework_init(Framework *fw, const char *device_id,
@@ -39,8 +43,13 @@ int framework_broadcast(Framework *fw, const CarMessage *msg);
 
 /**
  * @brief Register a callback function for incoming messages
- * Set to NULL to disable. Called from the server thread on each received message.
  */
 void framework_set_callback(Framework *fw, MessageCallback cb);
+
+/**
+ * @brief Register a sensor reading callback
+ * Called periodically to get current distance and send to other cars
+ */
+void framework_set_sensor(Framework *fw, SensorReadCallback cb);
 
 #endif // FRAMEWORK_CORE_H

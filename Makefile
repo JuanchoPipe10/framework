@@ -22,7 +22,10 @@ SRC = $(SRC_DIR)/main.c \
       $(SRC_DIR)/tcp_comm.c \
       $(SRC_DIR)/device_registry.c \
       $(SRC_DIR)/framework_core.c \
-      $(SRC_DIR)/udp_discovery.c
+      $(SRC_DIR)/udp_discovery.c \
+      $(SRC_DIR)/motor_ctrl.c \
+      $(SRC_DIR)/srf05.c \
+      $(SRC_DIR)/servo.c
 
 OBJ    = $(SRC:.c=.o)
 TARGET = $(BIN_DIR)/framework
