@@ -3,6 +3,7 @@
  * @brief UDP-based automatic device discovery implementation
  */
 #include <net/if.h>
+#include <sys/ioctl.h>
 #include "udp_discovery.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -173,6 +174,56 @@ static void *listener_thread(void *arg)
 }
 
 /* ------------------------------------------------------------------ */
+/*  Interface detection                                                 */
+/* ------------------------------------------------------------------ */
+
+static void detect_iface(char *iface_out, size_t iface_len,
+                          char *bcast_out,  size_t bcast_len)
+{
+    const char *candidates[] = { "wlan0", "p2p0" };
+    int tmp = socket(AF_INET, SOCK_DGRAM, 0);
+    if (tmp < 0) {
+        strncpy(iface_out, "wlan0", iface_len - 1);
+        iface_out[iface_len - 1] = '\0';
+        strncpy(bcast_out, DISCOVERY_BROADCAST, bcast_len - 1);
+        bcast_out[bcast_len - 1] = '\0';
+        return;
+    }
+    for (int i = 0; i < 2; i++) {
+        struct ifreq ifr;
+        memset(&ifr, 0, sizeof(ifr));
+        strncpy(ifr.ifr_name, candidates[i], IFNAMSIZ - 1);
+        if (ioctl(tmp, SIOCGIFADDR, &ifr) != 0)
+            continue;
+
+        strncpy(iface_out, candidates[i], iface_len - 1);
+        iface_out[iface_len - 1] = '\0';
+
+        /* Try to obtain the broadcast address for this interface */
+        memset(&ifr, 0, sizeof(ifr));
+        strncpy(ifr.ifr_name, candidates[i], IFNAMSIZ - 1);
+        if (ioctl(tmp, SIOCGIFBRDADDR, &ifr) == 0) {
+            struct sockaddr_in *bcast = (struct sockaddr_in *)&ifr.ifr_broadaddr;
+            inet_ntop(AF_INET, &bcast->sin_addr, bcast_out, (socklen_t)(bcast_len - 1));
+            bcast_out[bcast_len - 1] = '\0';
+        } else {
+            strncpy(bcast_out, DISCOVERY_BROADCAST, bcast_len - 1);
+            bcast_out[bcast_len - 1] = '\0';
+        }
+
+        close(tmp);
+        printf("[DISCOVERY] Detected interface: %s, broadcast: %s\n", iface_out, bcast_out);
+        return;
+    }
+    close(tmp);
+    strncpy(iface_out, "wlan0", iface_len - 1);
+    iface_out[iface_len - 1] = '\0';
+    strncpy(bcast_out, DISCOVERY_BROADCAST, bcast_len - 1);
+    bcast_out[bcast_len - 1] = '\0';
+    printf("[DISCOVERY] No active interface found - falling back to wlan0/%s\n", bcast_out);
+}
+
+/* ------------------------------------------------------------------ */
 /*  Public API                                                          */
 /* ------------------------------------------------------------------ */
 
@@ -190,6 +241,8 @@ int discovery_init(DiscoveryContext *ctx,
     ctx->running     = 1;
     ctx->udp_sock    = -1;
     ctx->listen_sock = -1;
+    detect_iface(ctx->iface, sizeof(ctx->iface),
+                 ctx->broadcast_addr, sizeof(ctx->broadcast_addr));
 
     /* --- Broadcast sender socket --- */
     ctx->udp_sock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -206,13 +259,13 @@ int discovery_init(DiscoveryContext *ctx,
         return -1;
     }
 
-    // Bind sender to specific interface
+    // Bind sender to detected interface
     struct ifreq ifr;
     memset(&ifr, 0, sizeof(ifr));
-    strncpy(ifr.ifr_name, "wlan0", IFNAMSIZ - 1);
+    strncpy(ifr.ifr_name, ctx->iface, IFNAMSIZ - 1);
     if (setsockopt(ctx->udp_sock, SOL_SOCKET, SO_BINDTODEVICE,
                    &ifr, sizeof(ifr)) < 0) {
-        perror("[DISCOVERY] Failed to bind to wlan0");
+        perror("[DISCOVERY] Failed to bind to interface");
     }
 
     /* --- Listener socket --- */
@@ -241,8 +294,8 @@ int discovery_init(DiscoveryContext *ctx,
         return -1;
     }
     printf("[DISCOVERY] Sockets created OK\n");
-    printf("[DISCOVERY] Initialized for device: %s (type: %s, tcp_port: %d)\n",
-           device_id, device_type, tcp_port);
+    printf("[DISCOVERY] Initialized for device: %s (type: %s, tcp_port: %d, iface: %s, bcast: %s)\n",
+           device_id, device_type, tcp_port, ctx->iface, ctx->broadcast_addr);
     return 0;
 }
 
@@ -255,7 +308,7 @@ int discovery_announce(DiscoveryContext *ctx)
     memset(&addr, 0, sizeof(addr));
     addr.sin_family      = AF_INET;
     addr.sin_port        = htons(DISCOVERY_PORT);
-    inet_pton(AF_INET, DISCOVERY_BROADCAST, &addr.sin_addr);
+    inet_pton(AF_INET, ctx->broadcast_addr, &addr.sin_addr);
 
     ssize_t sent = sendto(ctx->udp_sock, &pkt, sizeof(pkt), 0,
                           (struct sockaddr *)&addr, sizeof(addr));
@@ -277,7 +330,7 @@ int discovery_goodbye(DiscoveryContext *ctx)
     memset(&addr, 0, sizeof(addr));
     addr.sin_family      = AF_INET;
     addr.sin_port        = htons(DISCOVERY_PORT);
-    inet_pton(AF_INET, DISCOVERY_BROADCAST, &addr.sin_addr);
+    inet_pton(AF_INET, ctx->broadcast_addr, &addr.sin_addr);
 
     sendto(ctx->udp_sock, &pkt, sizeof(pkt), 0,
            (struct sockaddr *)&addr, sizeof(addr));

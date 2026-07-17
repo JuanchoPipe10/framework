@@ -93,6 +93,10 @@ float srf05_read_cm(void) {
     return distance_cm;
 }
 
+volatile uint32_t *srf05_get_ptr(void) {
+    return trig_reg;   /* base of gpio1 mapping; echo is at offset 0x08 */
+}
+
 void srf05_cleanup(void) {
     if (trig_reg != NULL) {
         munmap((void *)trig_reg, MAP_SIZE);

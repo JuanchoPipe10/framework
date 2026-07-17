@@ -70,6 +70,10 @@ void servo_center(void) {
     servo_set_angle(90);
 }
 
+volatile uint32_t *servo_get_ptr(void) {
+    return servo_reg;
+}
+
 void servo_cleanup(void) {
     servo_center();
 

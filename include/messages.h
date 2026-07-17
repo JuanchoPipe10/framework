@@ -31,6 +31,8 @@ typedef struct {
     float speed;          // Current speed
     uint8_t state;        // Device state (0=stopped, 1=moving, 2=error)
     uint32_t timestamp;   // Unix timestamp
+    int32_t sign_id;          // Traffic sign ID: -1=none, 0-43=sign category
+    float sign_confidence;    // Detection confidence [0.0, 1.0]
 } CarMessage;
 
 /**

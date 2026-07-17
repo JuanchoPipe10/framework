@@ -49,6 +49,8 @@ typedef struct {
     uint16_t my_tcp_port;
     DeviceRegistry *registry;              // Shared registry to update
     volatile int running;
+    char    iface[16];                       // Network interface used for broadcast
+    char    broadcast_addr[16];              // Broadcast address detected at runtime
 } DiscoveryContext;
 
 /**

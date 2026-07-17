@@ -5,6 +5,7 @@
 
 #include "framework_core.h"
 #include "tcp_comm.h"
+#include "motor_ctrl.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,6 +13,12 @@
 #include <pthread.h>
 #include <signal.h>
 #include <arpa/inet.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <sys/select.h>
+#include <time.h>
+
+#define LOCAL_SOCK_PATH "/tmp/robot_fw.sock"
 
 
 // Global framework pointer for signal handler
@@ -89,13 +96,25 @@ void* client_thread(void *arg) {
                 distance = fw->read_sensor();
             }
 
+            uint32_t state;
+            if (distance < 0) {
+                state = 2;
+            } else if (distance < 30.0f) {
+                motor_brake_all();
+                state = 3;
+            } else {
+                state = 1;
+            }
+
             CarMessage msg = {
-                .id        = 1,
-                .x         = distance,
-                .y         = 0.0f,
-                .speed     = 0.0f,
-                .state     = (distance < 0) ? 2 : 1,
-                .timestamp = (uint32_t)time(NULL)
+                .id               = 1,
+                .x                = distance,
+                .y                = 0.0f,
+                .speed            = 0.0f,
+                .state            = state,
+                .timestamp        = (uint32_t)time(NULL),
+                .sign_id          = -1,
+                .sign_confidence  = 0.0f
             };
 
             if (tcp_send_car_message(dev->sock, &msg) < 0) {
@@ -152,8 +171,8 @@ void* server_thread(void *arg) {
                 break;
             }
             
-            printf("[SERVER] Received - ID=%u, pos=(%.2f,%.2f), speed=%.2f, state=%u\n",
-                msg.id, msg.x, msg.y, msg.speed, msg.state);
+            printf("[SERVER] Received - ID=%u, pos=(%.2f,%.2f), speed=%.2f, state=%u, sign_id=%d, sign_conf=%.2f\n",
+                msg.id, msg.x, msg.y, msg.speed, msg.state, msg.sign_id, msg.sign_confidence);
 
             // Fire callback if registered
             if (fw->on_message) {
@@ -186,9 +205,105 @@ void* server_thread(void *arg) {
     return NULL;
 }
 
+static void *local_socket_thread(void *arg)
+{
+    Framework *fw = (Framework *)arg;
+
+    unlink(LOCAL_SOCK_PATH);
+
+    int srv = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (srv < 0) {
+        perror("[LOCAL] socket");
+        return NULL;
+    }
+
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, LOCAL_SOCK_PATH, sizeof(addr.sun_path) - 1);
+
+    if (bind(srv, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        perror("[LOCAL] bind");
+        close(srv);
+        return NULL;
+    }
+
+    if (listen(srv, 5) < 0) {
+        perror("[LOCAL] listen");
+        close(srv);
+        unlink(LOCAL_SOCK_PATH);
+        return NULL;
+    }
+
+    printf("[LOCAL] Listening on %s\n", LOCAL_SOCK_PATH);
+
+    while (fw->running) {
+        fd_set fds;
+        FD_ZERO(&fds);
+        FD_SET(srv, &fds);
+        struct timeval tv = { .tv_sec = 1, .tv_usec = 0 };
+        if (select(srv + 1, &fds, NULL, NULL, &tv) <= 0) continue;
+
+        int conn = accept(srv, NULL, NULL);
+        if (conn < 0) continue;
+
+        char buf[128];
+        ssize_t n = recv(conn, buf, sizeof(buf) - 1, 0);
+        close(conn);
+        if (n <= 0) continue;
+        buf[n] = '\0';
+
+        char *nl = strchr(buf, '\n');
+        if (nl) *nl = '\0';
+
+        CarMessage msg;
+        memset(&msg, 0, sizeof(msg));
+        msg.timestamp = (uint32_t)time(NULL);
+
+        msg.sign_id         = -1;
+        msg.sign_confidence = 0.0f;
+
+        if (strncmp(buf, "OBSTACLE", 8) == 0) {
+            float dist = 0.0f;
+            sscanf(buf + 8, "%f", &dist);
+            msg.state = 3;
+            msg.x     = dist;
+            printf("[LOCAL] OBSTACLE %.2f cm -> broadcast\n", dist);
+        } else if (strcmp(buf, "MOVING") == 0) {
+            msg.state = 1;
+            msg.x     = 999.0f;
+            printf("[LOCAL] MOVING -> broadcast\n");
+        } else if (strcmp(buf, "STOPPED") == 0) {
+            msg.state = 0;
+            msg.x     = 0.0f;
+            printf("[LOCAL] STOPPED -> broadcast\n");
+        } else if (strncmp(buf, "SIGN", 4) == 0) {
+            int32_t sign_id = -1;
+            float confidence = 0.0f;
+            sscanf(buf + 4, "%d %f", &sign_id, &confidence);
+            msg.state          = 1;
+            msg.x              = 999.0f;
+            msg.sign_id        = sign_id;
+            msg.sign_confidence = confidence;
+            printf("[LOCAL] SIGN id=%d conf=%.2f state=%u x=%.2f -> broadcast\n",
+                   msg.sign_id, msg.sign_confidence, msg.state, msg.x);
+        } else {
+            printf("[LOCAL] Unknown: %s\n", buf);
+            continue;
+        }
+
+        framework_broadcast(fw, &msg);
+    }
+
+    close(srv);
+    unlink(LOCAL_SOCK_PATH);
+    printf("[LOCAL] Thread stopped\n");
+    return NULL;
+}
+
 int framework_run(Framework *fw) {
-    pthread_t server_tid, client_tid;
-    int server_started = 0, client_started = 0;
+    pthread_t server_tid, client_tid, local_tid;
+    int server_started = 0, client_started = 0, local_started = 0;
 
     // Start UDP discovery FIRST
     if (discovery_init(&fw->discovery,
@@ -219,6 +334,10 @@ int framework_run(Framework *fw) {
         client_started = 1;
     }
 
+    // Start local IPC socket listener
+    if (pthread_create(&local_tid, NULL, local_socket_thread, fw) == 0)
+        local_started = 1;
+
     registry_print(&fw->registry);
     printf("[FRAMEWORK] Running. Press Ctrl+C to exit.\n\n");
 
@@ -229,6 +348,8 @@ int framework_run(Framework *fw) {
     discovery_stop(&fw->discovery);
     if (server_started) { pthread_cancel(server_tid); pthread_join(server_tid, NULL); }
     if (client_started) { pthread_cancel(client_tid); pthread_join(client_tid, NULL); }
+    if (local_started)  { pthread_cancel(local_tid);  pthread_join(local_tid,  NULL); }
+    unlink(LOCAL_SOCK_PATH);
     if (fw->server_sock >= 0) tcp_close(fw->server_sock);
     printf("[FRAMEWORK] Stopped\n");
     return 0;
@@ -260,16 +381,17 @@ int framework_broadcast(Framework *fw, const CarMessage *msg) {
     Device *devices;
     int count = registry_get_other_devices(&fw->registry, &devices);
     int sent = 0;
-    
+
     for (int i = 0; i < count; i++) {
-        if (framework_send_to_device(fw, devices[i].device_id, msg) == 0) {
+        Device *dev = &devices[i];
+        if (!dev->connected || dev->sock < 0) continue;
+        if (tcp_send_car_message(dev->sock, msg) == 0) {
             sent++;
         }
     }
-    
+
     printf("[FRAMEWORK] Broadcast sent to %d/%d devices\n", sent, count);
     return sent;
-    
 }
 void framework_set_callback(Framework *fw, MessageCallback cb) {
     fw->on_message = cb;

@@ -30,4 +30,10 @@ float srf05_read_cm(void);
  */
 void srf05_cleanup(void);
 
+/**
+ * @brief Get the raw mapped base pointer
+ * @return Pointer to axi_gpio_1 base (offset 0x00 = TRIG, 0x08 = ECHO), or NULL if not initialized
+ */
+volatile uint32_t *srf05_get_ptr(void);
+
 #endif // SRF05_H
