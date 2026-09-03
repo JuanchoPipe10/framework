@@ -8,6 +8,7 @@
 
 #include <stdint.h>
 #include <time.h>
+#include <pthread.h>
 
 #define MAX_DEVICES 16
 #define MAX_DEVICE_ID_LEN 32
@@ -28,6 +29,7 @@ typedef struct {
     Device devices[MAX_DEVICES];
     int count;
     char my_device_id[MAX_DEVICE_ID_LEN];
+    pthread_mutex_t lock;
 } DeviceRegistry;
 
 /**

@@ -19,6 +19,7 @@
 #include <time.h>
 
 #define LOCAL_SOCK_PATH "/tmp/robot_fw.sock"
+#define CONTROL_SOCK_PATH "/tmp/robot_ctrl.sock"
 
 
 // Global framework pointer for signal handler
@@ -79,8 +80,10 @@ void* client_thread(void *arg) {
                 continue;
             }
 
+            pthread_mutex_lock(&fw->registry.lock);
             registry_set_connected(&fw->registry, dev->device_id, 1);
             dev->sock = sock;
+            pthread_mutex_unlock(&fw->registry.lock);
             printf("[CLIENT] Persistent connection established to %s (%s:%d)\n",
                    dev->device_id, dev->ip, dev->tcp_port);
         }
@@ -118,11 +121,12 @@ void* client_thread(void *arg) {
             };
 
             if (tcp_send_car_message(dev->sock, &msg) < 0) {
-                // Connection dropped — mark for reconnect
                 printf("[CLIENT] Lost connection to %s — will reconnect\n", dev->device_id);
+                pthread_mutex_lock(&fw->registry.lock);
                 tcp_close(dev->sock);
                 dev->sock = -1;
                 registry_set_connected(&fw->registry, dev->device_id, 0);
+                pthread_mutex_unlock(&fw->registry.lock);
                 continue;
             }
 
@@ -149,58 +153,122 @@ void* client_thread(void *arg) {
     return NULL;
 }
 
-// Server thread: accepts incoming connections
+// Forward a remote start/stop command to the local robot-control process,
+// as plain text over a dedicated Unix socket (mirrors local_ipc.c's
+// fw_notify(), but in the opposite direction: framework -> robot).
+static void forward_control_command(const CarMessage *msg)
+{
+    const char *cmd = (msg->msg_type == MSG_CMD_START) ? "start" :
+                       (msg->msg_type == MSG_CMD_STOP)  ? "stop"  : NULL;
+    if (!cmd) return;
+
+    int s = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (s < 0) return;
+
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, CONTROL_SOCK_PATH, sizeof(addr.sun_path) - 1);
+
+    if (connect(s, (struct sockaddr *)&addr, sizeof(addr)) == 0) {
+        char buf[16];
+        int len = snprintf(buf, sizeof(buf), "%s\n", cmd);
+        write(s, buf, len);
+        printf("[SERVER] Forwarded remote command '%s' to %s\n", cmd, CONTROL_SOCK_PATH);
+    }
+
+    close(s);
+}
+
+typedef struct {
+    Framework *fw;
+    int client_sock;
+} ServerClientArgs;
+
+// Handles one accepted TCP connection for its whole lifetime, in its own
+// thread, so a long-lived peer (e.g. another car) can't starve out other
+// inbound connections (e.g. the dashboard sending a one-shot command).
+static void *server_client_thread(void *arg)
+{
+    ServerClientArgs *args = (ServerClientArgs *)arg;
+    Framework *fw = args->fw;
+    int client_sock = args->client_sock;
+    free(args);
+
+    char client_ip[INET_ADDRSTRLEN] = {0};
+    struct sockaddr_in peer;
+    socklen_t peer_len = sizeof(peer);
+    if (getpeername(client_sock, (struct sockaddr*)&peer, &peer_len) == 0) {
+        inet_ntop(AF_INET, &peer.sin_addr, client_ip, sizeof(client_ip));
+    }
+
+    CarMessage msg;
+    while (fw->running) {
+        if (tcp_receive_car_message(client_sock, &msg) < 0) {
+            break;
+        }
+
+        printf("[SERVER] Received - ID=%u, pos=(%.2f,%.2f), speed=%.2f, state=%u, msg_type=%u, sign_id=%d, sign_conf=%.2f\n",
+            msg.id, msg.x, msg.y, msg.speed, msg.state, msg.msg_type, msg.sign_id, msg.sign_confidence);
+
+        if (msg.msg_type == MSG_CMD_START || msg.msg_type == MSG_CMD_STOP) {
+            forward_control_command(&msg);
+        } else if (fw->on_message) {
+            fw->on_message(client_ip, &msg);
+        }
+
+        // Send acknowledgment
+        CarMessage ack = {
+            .id               = 999,
+            .x                = 0,
+            .y                = 0,
+            .speed            = 0,
+            .state            = 1,
+            .timestamp        = (uint32_t)time(NULL),
+            .sign_id          = -1,
+            .sign_confidence  = 0.0f
+        };
+
+        tcp_send_car_message(client_sock, &ack);
+    }
+
+    tcp_close(client_sock);
+    return NULL;
+}
+
+// Server thread: accepts incoming connections, one worker thread per peer
 void* server_thread(void *arg) {
     Framework *fw = (Framework*)arg;
-    
+
     printf("[SERVER] Thread started\n");
-    
+
     while (fw->running) {
         printf("[SERVER] Waiting for connections on port %d...\n", fw->my_port);
-        
+
         int client_sock = tcp_server_accept(fw->server_sock);
         if (client_sock < 0) {
             if (fw->running) sleep(1);
             continue;
         }
-        
-        // Handle client communication
-        CarMessage msg;
-        while (fw->running) {
-            if (tcp_receive_car_message(client_sock, &msg) < 0) {
-                break;
-            }
-            
-            printf("[SERVER] Received - ID=%u, pos=(%.2f,%.2f), speed=%.2f, state=%u, sign_id=%d, sign_conf=%.2f\n",
-                msg.id, msg.x, msg.y, msg.speed, msg.state, msg.sign_id, msg.sign_confidence);
 
-            // Fire callback if registered
-            if (fw->on_message) {
-                char client_ip[INET_ADDRSTRLEN];
-                // Get peer IP from socket
-                struct sockaddr_in peer;
-                socklen_t peer_len = sizeof(peer);
-                getpeername(client_sock, (struct sockaddr*)&peer, &peer_len);
-                inet_ntop(AF_INET, &peer.sin_addr, client_ip, sizeof(client_ip));
-                fw->on_message(client_ip, &msg);
-            }
-            
-            // Send acknowledgment
-            CarMessage ack = {
-                .id = 999,
-                .x = 0,
-                .y = 0,
-                .speed = 0,
-                .state = 1,
-                .timestamp = (uint32_t)time(NULL)
-            };
-            
-            tcp_send_car_message(client_sock, &ack);
+        ServerClientArgs *args = malloc(sizeof(ServerClientArgs));
+        if (!args) {
+            tcp_close(client_sock);
+            continue;
         }
-        
-        tcp_close(client_sock);
+        args->fw = fw;
+        args->client_sock = client_sock;
+
+        pthread_t client_tid;
+        if (pthread_create(&client_tid, NULL, server_client_thread, args) != 0) {
+            perror("[SERVER] Failed to spawn client thread");
+            free(args);
+            tcp_close(client_sock);
+            continue;
+        }
+        pthread_detach(client_tid);
     }
-    
+
     printf("[SERVER] Thread stopped\n");
     return NULL;
 }
@@ -359,26 +427,9 @@ void framework_stop(Framework *fw) {
     fw->running = 0;
 }
 
-int framework_send_to_device(Framework *fw, const char *device_id, const CarMessage *msg) {
-    Device *dev = registry_get_device(&fw->registry, device_id);
-    if (!dev) {
-        fprintf(stderr, "[ERROR] Device %s not found\n", device_id);
-        return -1;
-    }
-    
-    int sock = tcp_client_connect(dev->ip, dev->tcp_port);
-    if (sock < 0) {
-        return -1;
-    }
-    
-    int result = tcp_send_car_message(sock, msg);
-    tcp_close(sock);
-    
-    return result;
-}
-
 int framework_broadcast(Framework *fw, const CarMessage *msg) {
     Device *devices;
+    pthread_mutex_lock(&fw->registry.lock);
     int count = registry_get_other_devices(&fw->registry, &devices);
     int sent = 0;
 
@@ -389,6 +440,7 @@ int framework_broadcast(Framework *fw, const CarMessage *msg) {
             sent++;
         }
     }
+    pthread_mutex_unlock(&fw->registry.lock);
 
     printf("[FRAMEWORK] Broadcast sent to %d/%d devices\n", sent, count);
     return sent;

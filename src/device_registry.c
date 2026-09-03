@@ -12,6 +12,11 @@ int registry_init(DeviceRegistry *reg, const char *my_device_id) {
     memset(reg, 0, sizeof(DeviceRegistry));
     strncpy(reg->my_device_id, my_device_id, MAX_DEVICE_ID_LEN - 1);
     reg->count = 0;
+    pthread_mutexattr_t attr;
+    pthread_mutexattr_init(&attr);
+    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+    pthread_mutex_init(&reg->lock, &attr);
+    pthread_mutexattr_destroy(&attr);
     printf("[REGISTRY] Initialized for device: %s\n", my_device_id);
     return 0;
 }
@@ -51,8 +56,10 @@ int registry_load_from_file(DeviceRegistry *reg, const char *filename) {
 
 int registry_add_device(DeviceRegistry *reg, const char *id, const char *type,
                         const char *ip, uint16_t port) {
+    pthread_mutex_lock(&reg->lock);
     if (reg->count >= MAX_DEVICES) {
         fprintf(stderr, "[REGISTRY] Max devices reached\n");
+        pthread_mutex_unlock(&reg->lock);
         return -1;
     }
 
@@ -66,6 +73,7 @@ int registry_add_device(DeviceRegistry *reg, const char *id, const char *type,
 
     reg->count++;
     printf("[REGISTRY] Added: %s (%s) at %s:%d\n", id, type, ip, port);
+    pthread_mutex_unlock(&reg->lock);
     return 0;
 }
 
@@ -84,6 +92,7 @@ int registry_get_other_devices(DeviceRegistry *reg, Device **devices) {
 }
 
 void registry_set_connected(DeviceRegistry *reg, const char *device_id, int connected) {
+    pthread_mutex_lock(&reg->lock);
     Device *dev = registry_get_device(reg, device_id);
     if (dev) {
         dev->connected = connected;
@@ -91,13 +100,16 @@ void registry_set_connected(DeviceRegistry *reg, const char *device_id, int conn
             dev->last_contact = time(NULL);
         }
     }
+    pthread_mutex_unlock(&reg->lock);
 }
 
 void registry_update_contact(DeviceRegistry *reg, const char *device_id) {
+    pthread_mutex_lock(&reg->lock);
     Device *dev = registry_get_device(reg, device_id);
     if (dev) {
         dev->last_contact = time(NULL);
     }
+    pthread_mutex_unlock(&reg->lock);
 }
 
 void registry_print(DeviceRegistry *reg) {

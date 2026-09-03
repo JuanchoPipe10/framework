@@ -39,10 +39,4 @@ void servo_center(void);
  */
 void servo_cleanup(void);
 
-/**
- * @brief Get the raw mapped register pointer
- * @return Pointer to the AXI GPIO base (0xA0020000), or NULL if not initialized
- */
-volatile uint32_t *servo_get_ptr(void);
-
 #endif // SERVO_H

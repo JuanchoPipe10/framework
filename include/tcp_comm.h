@@ -12,8 +12,6 @@
 #include <stdint.h>
 #include "messages.h"
 
-#define TCP_BUFFER_SIZE 4096
-
 /**
  * @brief Initialize TCP server socket
  * @param port Port number to listen on

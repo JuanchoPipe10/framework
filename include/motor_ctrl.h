@@ -58,10 +58,4 @@ void motor_brake_all(void);
  */
 void motor_cleanup(void);
 
-/**
- * @brief Get the raw mapped register pointer
- * @return Pointer to the AXI GPIO base (0xA0000000), or NULL if not initialized
- */
-volatile uint32_t *motor_get_ptr(void);
-
 #endif // MOTOR_CTRL_H

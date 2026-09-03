@@ -12,14 +12,16 @@
 #include <stdint.h>
 
 /**
- * @brief Message types for device communication
+ * @brief Distinguishes status telemetry from remote control commands
+ *
+ * Placed right after `state` in CarMessage so it fills existing padding
+ * instead of growing the struct (sizeof(CarMessage) stays 32 bytes).
  */
 typedef enum {
-    MSG_TYPE_DISCOVERY = 1,
-    MSG_TYPE_CAR_STATUS = 2,
-    MSG_TYPE_SENSOR_DATA = 3,
-    MSG_TYPE_COMMAND = 4
-} MessageType;
+    MSG_STATUS    = 0,   // Regular status/telemetry message (existing behavior)
+    MSG_CMD_START = 1,   // Remote command: start
+    MSG_CMD_STOP  = 2    // Remote command: stop
+} CarMsgType;
 
 /**
  * @brief Structure for vehicle/device status messages
@@ -30,19 +32,10 @@ typedef struct {
     float y;              // Position Y coordinate
     float speed;          // Current speed
     uint8_t state;        // Device state (0=stopped, 1=moving, 2=error)
+    uint8_t msg_type;     // CarMsgType: MSG_STATUS or a remote command
     uint32_t timestamp;   // Unix timestamp
     int32_t sign_id;          // Traffic sign ID: -1=none, 0-43=sign category
     float sign_confidence;    // Detection confidence [0.0, 1.0]
 } CarMessage;
-
-/**
- * @brief Discovery response structure
- */
-typedef struct {
-    char device_id[32];       // Device identifier (e.g., "car03")
-    char device_type[16];     // Device type (e.g., "ultra96", "pc")
-    uint16_t tcp_port;        // TCP port for direct communication
-    uint32_t capabilities;    // Capability flags (reserved for future use)
-} DiscoveryResponse;
 
 #endif // MESSAGES_H

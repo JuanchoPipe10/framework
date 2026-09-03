@@ -38,7 +38,6 @@ int framework_init(Framework *fw, const char *device_id,
 int framework_load_config(Framework *fw, const char *config_file);
 int framework_run(Framework *fw);
 void framework_stop(Framework *fw);
-int framework_send_to_device(Framework *fw, const char *device_id, const CarMessage *msg);
 int framework_broadcast(Framework *fw, const CarMessage *msg);
 
 /**

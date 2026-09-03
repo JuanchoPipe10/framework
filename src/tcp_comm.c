@@ -93,21 +93,24 @@ int tcp_client_connect(const char *ip, uint16_t port) {
 }
 
 int tcp_send_car_message(int sock, const CarMessage *msg) {
-    ssize_t sent = send(sock, msg, sizeof(CarMessage), 0);
-    
-    if (sent < 0) {
-        perror("[TCP] Send failed");
-        return -1;
+    const uint8_t *buf = (const uint8_t *)msg;
+    size_t remaining = sizeof(CarMessage);
+    while (remaining > 0) {
+        ssize_t n = send(sock, buf, remaining, 0);
+        if (n < 0) {
+            perror("[TCP] Send failed");
+            return -1;
+        }
+        buf += n;
+        remaining -= (size_t)n;
     }
-
     printf("[TCP] CarMessage sent: ID=%u, pos=(%.2f,%.2f), speed=%.2f, state=%u\n",
            msg->id, msg->x, msg->y, msg->speed, msg->state);
-
     return 0;
 }
 
 int tcp_receive_car_message(int sock, CarMessage *msg) {
-    ssize_t received = recv(sock, msg, sizeof(CarMessage), 0);
+    ssize_t received = recv(sock, msg, sizeof(CarMessage), MSG_WAITALL);
 
     if (received < 0) {
         perror("[TCP] Receive failed");
@@ -116,6 +119,12 @@ int tcp_receive_car_message(int sock, CarMessage *msg) {
 
     if (received == 0) {
         printf("[TCP] Connection closed by peer\n");
+        return -1;
+    }
+
+    if (received != (ssize_t)sizeof(CarMessage)) {
+        fprintf(stderr, "[TCP] Short read: %zd of %zu bytes\n",
+                received, sizeof(CarMessage));
         return -1;
     }
 

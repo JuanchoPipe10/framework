@@ -69,10 +69,6 @@ void motor_brake_all(void) {
     printf("[MOTOR] All motors braking\n");
 }
 
-volatile uint32_t *motor_get_ptr(void) {
-    return (volatile uint32_t *)map_base;
-}
-
 void motor_cleanup(void) {
     motor_stop_all();
     if (map_base != NULL) {
